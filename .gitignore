@@ -1,4 +1,8 @@
-.venv/
+data/sms_large.csv
+models/*.pkl
+models/threshold.json
 __pycache__/
 *.pyc
-.ipynb_checkpoints/
+.env
+venv/
+.venv/
