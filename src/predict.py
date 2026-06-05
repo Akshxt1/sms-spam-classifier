@@ -1,11 +1,7 @@
 """
-Prediction module.
-- Lazy model loading (won't crash on fresh clone)
-- Tuned threshold from training
-- Spam anatomy: top contributing word-level features
+Multi-model prediction with lazy loading, per-model thresholds, and spam anatomy.
 """
-import os
-import json
+import os, json
 import joblib
 import numpy as np
 from scipy.sparse import hstack
@@ -13,119 +9,144 @@ from scipy.sparse import hstack
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from src.preprocess import clean_text, extract_signals
+from src.features import SoftEnsemble  # noqa: F401
 
 MODELS_DIR = os.path.join(os.path.dirname(__file__), "..", "models")
-DEFAULT_THRESHOLD = 0.45  # fallback if threshold.json missing
+
+MODEL_INFO = {
+    "ensemble": {
+        "label":   "Ensemble",
+        "tagline": "Recommended — best F1 + recall",
+        "icon":    "shield",
+    },
+    "linear_svc": {
+        "label":   "Linear SVC",
+        "tagline": "Best accuracy, high precision",
+        "icon":    "bolt",
+    },
+    "logistic_reg": {
+        "label":   "Logistic Reg.",
+        "tagline": "Well-calibrated probabilities",
+        "icon":    "chart-line",
+    },
+    "naive_bayes": {
+        "label":   "Naive Bayes",
+        "tagline": "Fastest, highest spam recall",
+        "icon":    "brain",
+    },
+}
 
 # Lazy singletons
-_model = None
-_vectorizer = None
-_meta_extractor = None
-_feature_names = None
-_coefs = None
-_threshold = None
+_cache: dict = {}
 
 
-def _load_models():
-    global _model, _vectorizer, _meta_extractor, _feature_names, _coefs, _threshold
-    if _model is not None:
-        return
+def _load(model_id: str):
+    if model_id in _cache:
+        return _cache[model_id]
 
-    required = ["model.pkl", "vectorizer.pkl", "metadata_extractor.pkl"]
-    for f in required:
-        path = os.path.join(MODELS_DIR, f)
-        if not os.path.exists(path):
-            raise FileNotFoundError(
-                f"Model file not found: {path}\n"
-                "Run: python -m src.train  to train the model first."
-            )
+    pkl = os.path.join(MODELS_DIR, f"{model_id}.pkl")
+    meta_json = os.path.join(MODELS_DIR, f"{model_id}_meta.json")
 
-    _model           = joblib.load(os.path.join(MODELS_DIR, "model.pkl"))
-    _vectorizer      = joblib.load(os.path.join(MODELS_DIR, "vectorizer.pkl"))
-    _meta_extractor  = joblib.load(os.path.join(MODELS_DIR, "metadata_extractor.pkl"))
+    if not os.path.exists(pkl):
+        raise FileNotFoundError(f"Model not found: {pkl}\nRun: python -m src.train_all")
 
-    try:
-        _feature_names = joblib.load(os.path.join(MODELS_DIR, "feature_names.pkl"))
-        _coefs         = joblib.load(os.path.join(MODELS_DIR, "coefficients.pkl"))
-    except FileNotFoundError:
-        _feature_names = None
-        _coefs = None
+    model = joblib.load(pkl)
+    with open(meta_json) as f:
+        meta = json.load(f)
 
-    t_path = os.path.join(MODELS_DIR, "threshold.json")
-    if os.path.exists(t_path):
-        with open(t_path) as f:
-            _threshold = json.load(f)["threshold"]
-    else:
-        _threshold = DEFAULT_THRESHOLD
-
-
-def predict_sms(message: str) -> dict:
-    """
-    Returns:
-        {
-          "label":      "SPAM" | "HAM",
-          "confidence": float (0-1),
-          "threshold":  float,
-          "signals":    dict from extract_signals(),
-          "anatomy":    [{"token": str, "weight": float}, ...] top spam triggers,
+    # Shared artefacts
+    if "_shared" not in _cache:
+        _cache["_shared"] = {
+            "vectorizer":     joblib.load(os.path.join(MODELS_DIR, "vectorizer.pkl")),
+            "meta_extractor": joblib.load(os.path.join(MODELS_DIR, "metadata_extractor.pkl")),
+            "feature_names":  _try_load(os.path.join(MODELS_DIR, "feature_names.pkl")),
+            "coefficients":   _try_load(os.path.join(MODELS_DIR, "coefficients.pkl")),
         }
-    """
-    _load_models()
 
-    cleaned = clean_text(message)
-    vec_tfidf = _vectorizer.transform([cleaned])
-    vec_meta  = _meta_extractor.transform([message])
+    _cache[model_id] = {"model": model, "meta": meta}
+    return _cache[model_id]
+
+
+def _try_load(path):
+    try:
+        return joblib.load(path)
+    except FileNotFoundError:
+        return None
+
+
+def predict_sms(message: str, model_id: str = "ensemble") -> dict:
+    entry   = _load(model_id)
+    shared  = _cache["_shared"]
+    model   = entry["model"]
+    threshold = entry["meta"]["threshold"]
+
+    cleaned   = clean_text(message)
+    vec_tfidf = shared["vectorizer"].transform([cleaned])
+    vec_meta  = shared["meta_extractor"].transform([message])
     vec       = hstack([vec_tfidf, vec_meta])
 
-    spam_prob = float(_model.predict_proba(vec)[0, 1])
-    label     = "SPAM" if spam_prob >= _threshold else "HAM"
+    spam_prob  = float(model.predict_proba(vec)[0, 1])
+    label      = "SPAM" if spam_prob >= threshold else "HAM"
     confidence = spam_prob if label == "SPAM" else 1.0 - spam_prob
 
-    anatomy = _get_anatomy(vec, vec_tfidf, spam_prob)
+    anatomy = _anatomy(vec, shared)
 
     return {
         "label":      label,
         "confidence": round(confidence, 4),
         "spam_prob":  round(spam_prob, 4),
-        "threshold":  round(_threshold, 4),
+        "threshold":  round(threshold, 4),
+        "model_id":   model_id,
         "signals":    extract_signals(message),
         "anatomy":    anatomy,
+        "metrics":    entry["meta"],
     }
 
 
-def _get_anatomy(vec, vec_tfidf, spam_prob: float, top_n: int = 8) -> list:
-    """Top word-level tokens that pushed toward the spam prediction."""
-    if _feature_names is None or _coefs is None:
+def predict_all(message: str) -> dict:
+    """Run all 4 models and return {model_id: result}."""
+    return {mid: predict_sms(message, mid) for mid in MODEL_INFO}
+
+
+def get_all_metrics() -> dict:
+    """Return saved test-set metrics for all models (no inference)."""
+    out = {}
+    for mid in MODEL_INFO:
+        path = os.path.join(MODELS_DIR, f"{mid}_meta.json")
+        if os.path.exists(path):
+            with open(path) as f:
+                out[mid] = json.load(f)
+    return out
+
+
+def _anatomy(vec, shared, top_n: int = 8) -> list:
+    names = shared["feature_names"]
+    coefs = shared["coefficients"]
+    if names is None or coefs is None:
         return []
-
-    arr = vec.toarray()[0]
-    contributions = arr * _coefs
-
-    anatomy = []
-    for idx in np.argsort(contributions)[::-1]:
-        name = str(_feature_names[idx])
-        weight = float(contributions[idx])
+    arr   = vec.toarray()[0]
+    contribs = arr * coefs
+    anatomy  = []
+    for idx in np.argsort(contribs)[::-1]:
+        name   = str(names[idx])
+        weight = float(contribs[idx])
         if weight <= 0:
             break
-        # Only show word-level features (skip char n-grams and metadata)
         if name.startswith("word_tfidf__"):
-            token = name.replace("word_tfidf__", "")
-            if len(token) > 1:
-                anatomy.append({"token": token, "weight": round(weight, 4)})
-        elif name.startswith("META:"):
-            # Only show metadata if it has meaningful contribution
-            if weight > 0.02:
-                label = name.replace("META:", "").replace("_", " ")
-                anatomy.append({"token": f"[{label}]", "weight": round(weight, 4)})
+            tok = name.replace("word_tfidf__", "")
+            if len(tok) > 1:
+                anatomy.append({"token": tok, "weight": round(weight, 4)})
+        elif name.startswith("META:") and weight > 0.02:
+            anatomy.append({"token": f'[{name.replace("META:", "").replace("_", " ")}]',
+                            "weight": round(weight, 4)})
         if len(anatomy) >= top_n:
             break
-
     return anatomy
 
 
 def models_loaded() -> bool:
     try:
-        _load_models()
+        _load("ensemble")
         return True
     except FileNotFoundError:
         return False
