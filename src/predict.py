@@ -1,15 +1,12 @@
-"""
-Multi-model prediction with lazy loading, per-model thresholds, and spam anatomy.
-"""
-import os, json
+import os
+import json
 import joblib
 import numpy as np
 from scipy.sparse import hstack
 
-import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from src.preprocess import clean_text, extract_signals
-from src.features import SoftEnsemble  # noqa: F401
+# Relative imports — avoids the /mount/src/ path conflict on Streamlit Cloud
+from .preprocess import clean_text, extract_signals
+from .features import SoftEnsemble  # noqa: F401 — needed for joblib unpickling
 
 MODELS_DIR = os.path.join(os.path.dirname(__file__), "..", "models")
 
@@ -17,26 +14,21 @@ MODEL_INFO = {
     "ensemble": {
         "label":   "Ensemble",
         "tagline": "Recommended — best F1 + recall",
-        "icon":    "shield",
     },
     "linear_svc": {
         "label":   "Linear SVC",
         "tagline": "Best accuracy, high precision",
-        "icon":    "bolt",
     },
     "logistic_reg": {
         "label":   "Logistic Reg.",
         "tagline": "Well-calibrated probabilities",
-        "icon":    "chart-line",
     },
     "naive_bayes": {
         "label":   "Naive Bayes",
         "tagline": "Fastest, highest spam recall",
-        "icon":    "brain",
     },
 }
 
-# Lazy singletons
 _cache: dict = {}
 
 
@@ -44,17 +36,18 @@ def _load(model_id: str):
     if model_id in _cache:
         return _cache[model_id]
 
-    pkl = os.path.join(MODELS_DIR, f"{model_id}.pkl")
-    meta_json = os.path.join(MODELS_DIR, f"{model_id}_meta.json")
+    pkl       = os.path.join(MODELS_DIR, f"{model_id}.pkl")
+    meta_path = os.path.join(MODELS_DIR, f"{model_id}_meta.json")
 
     if not os.path.exists(pkl):
-        raise FileNotFoundError(f"Model not found: {pkl}\nRun: python -m src.train_all")
+        raise FileNotFoundError(
+            f"Model not found: {pkl}\nRun: python -m src.train_all"
+        )
 
     model = joblib.load(pkl)
-    with open(meta_json) as f:
+    with open(meta_path) as f:
         meta = json.load(f)
 
-    # Shared artefacts
     if "_shared" not in _cache:
         _cache["_shared"] = {
             "vectorizer":     joblib.load(os.path.join(MODELS_DIR, "vectorizer.pkl")),
@@ -75,9 +68,9 @@ def _try_load(path):
 
 
 def predict_sms(message: str, model_id: str = "ensemble") -> dict:
-    entry   = _load(model_id)
-    shared  = _cache["_shared"]
-    model   = entry["model"]
+    entry     = _load(model_id)
+    shared    = _cache["_shared"]
+    model     = entry["model"]
     threshold = entry["meta"]["threshold"]
 
     cleaned   = clean_text(message)
@@ -89,8 +82,6 @@ def predict_sms(message: str, model_id: str = "ensemble") -> dict:
     label      = "SPAM" if spam_prob >= threshold else "HAM"
     confidence = spam_prob if label == "SPAM" else 1.0 - spam_prob
 
-    anatomy = _anatomy(vec, shared)
-
     return {
         "label":      label,
         "confidence": round(confidence, 4),
@@ -98,18 +89,16 @@ def predict_sms(message: str, model_id: str = "ensemble") -> dict:
         "threshold":  round(threshold, 4),
         "model_id":   model_id,
         "signals":    extract_signals(message),
-        "anatomy":    anatomy,
+        "anatomy":    _anatomy(vec, shared),
         "metrics":    entry["meta"],
     }
 
 
 def predict_all(message: str) -> dict:
-    """Run all 4 models and return {model_id: result}."""
     return {mid: predict_sms(message, mid) for mid in MODEL_INFO}
 
 
 def get_all_metrics() -> dict:
-    """Return saved test-set metrics for all models (no inference)."""
     out = {}
     for mid in MODEL_INFO:
         path = os.path.join(MODELS_DIR, f"{mid}_meta.json")
@@ -119,12 +108,20 @@ def get_all_metrics() -> dict:
     return out
 
 
+def models_loaded() -> bool:
+    try:
+        _load("ensemble")
+        return True
+    except FileNotFoundError:
+        return False
+
+
 def _anatomy(vec, shared, top_n: int = 8) -> list:
     names = shared["feature_names"]
     coefs = shared["coefficients"]
     if names is None or coefs is None:
         return []
-    arr   = vec.toarray()[0]
+    arr      = vec.toarray()[0]
     contribs = arr * coefs
     anatomy  = []
     for idx in np.argsort(contribs)[::-1]:
@@ -142,11 +139,3 @@ def _anatomy(vec, shared, top_n: int = 8) -> list:
         if len(anatomy) >= top_n:
             break
     return anatomy
-
-
-def models_loaded() -> bool:
-    try:
-        _load("ensemble")
-        return True
-    except FileNotFoundError:
-        return False
