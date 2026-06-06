@@ -1,6 +1,7 @@
 """SpamDetect v2 — multi-model SMS spam classifier"""
 import re
 import streamlit as st
+import streamlit.components.v1 as components
 from src.predict import predict_sms, predict_all, get_all_metrics, MODEL_INFO
 from src.preprocess import extract_signals
 
@@ -41,6 +42,22 @@ textarea:focus{border-color:#EF9F27!important;box-shadow:none!important}
 .stDownloadButton button{color:#1D9E75!important;border-color:#1D9E75!important}
 footer,#MainMenu,[data-testid="stDecoration"]{display:none!important}
 [data-testid="stHeader"]{background:transparent!important}
+/* ── Model selector radio → compact pills ── */
+div[data-testid="stRadio"]>div>label{display:none!important}
+div[data-testid="stRadio"] div[role="radiogroup"]{
+  background:#161614;border:.5px solid #2a2a26;border-radius:6px 6px 0 0;
+  padding:8px 10px!important;gap:6px!important;flex-wrap:nowrap!important}
+div[data-testid="stRadio"] div[role="radiogroup"] label{
+  background:#1c1c1a!important;border:.5px solid #2e2e2a!important;
+  border-radius:20px!important;padding:5px 16px!important;
+  cursor:pointer!important;min-height:unset!important;margin:0!important}
+div[data-testid="stRadio"] div[role="radiogroup"] label:hover{border-color:#6b6a64!important}
+div[data-testid="stRadio"] div[role="radiogroup"] label:has(input:checked){
+  background:#1c1200!important;border-color:#EF9F27!important}
+div[data-testid="stRadio"] div[role="radiogroup"] p{
+  font-size:12px!important;color:#5a5a54!important;
+  margin:0!important;white-space:nowrap!important;line-height:1.4!important}
+div[data-testid="stRadio"] div[role="radiogroup"] label:has(input:checked) p{color:#EF9F27!important}
 </style>""", unsafe_allow_html=True)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -105,34 +122,50 @@ def _sidebar():
 
 # ── Model selector pills ──────────────────────────────────────────────────────
 def _model_selector():
-    metrics = get_all_metrics()
-    cols = st.columns(4, gap="small")
+    metrics   = get_all_metrics()
     model_ids = list(MODEL_INFO.keys())
-    for i, mid in enumerate(model_ids):
-        info = MODEL_INFO[mid]
-        m    = metrics.get(mid, {})
-        acc  = int(m.get("accuracy",0)*100)
-        rec  = int(m.get("recall",0)*100)
-        active = st.session_state.active_model == mid
-        border = "#EF9F27" if active else "#2e2e2a"
-        bg     = "#1c1200" if active else "#161614"
-        tc     = "#EF9F27" if active else "#d4d3cc"
-        rec_c  = "#1D9E75" if mid in ("naive_bayes","ensemble") else "#BA7517"
-        badge  = "★ recommended" if mid == "ensemble" else ""
-        with cols[i]:
-            _md(f'<div style="background:{bg};border:.5px solid {border};border-radius:8px;'
-                f'padding:10px 12px;cursor:pointer;min-height:80px">'
-                f'{"<p style=\"font-size:9px;color:#EF9F27;margin:0 0 4px;letter-spacing:.06em\">"+badge+"</p>" if badge else "<div style=height:13px></div>"}'
-                f'<p style="font-size:12px;font-weight:500;color:{tc};margin:0 0 2px">{info["label"]}</p>'
-                f'<p style="font-size:10px;color:#5a5a54;margin:0 0 8px">{info["tagline"]}</p>'
-                f'<span style="font-size:10px;color:#d4d3cc">acc {acc}%</span>'
-                f'<span style="font-size:10px;color:{rec_c};margin-left:8px">rec {rec}%</span>'
-                f'</div>')
-            if st.button("select", key=f"sel_{mid}"):
-                st.session_state.active_model = mid
-                st.session_state.last_result   = None
-                st.session_state.compare_results = None
-                st.rerun()
+
+    # Horizontal radio styled as pills via CSS above
+    labels = {
+        "ensemble":     "Ensemble ★",
+        "linear_svc":   "Linear SVC",
+        "logistic_reg": "Logistic Reg.",
+        "naive_bayes":  "Naive Bayes",
+    }
+    current_idx = model_ids.index(st.session_state.active_model)
+    choice = st.radio(
+        "model",
+        options=model_ids,
+        format_func=lambda x: labels[x],
+        index=current_idx,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="model_radio",
+    )
+    if choice != st.session_state.active_model:
+        st.session_state.active_model    = choice
+        st.session_state.last_result     = None
+        st.session_state.compare_results = None
+        st.rerun()
+
+    # Compact metrics strip directly below the pill bar
+    m    = metrics.get(st.session_state.active_model, {})
+    info = MODEL_INFO[st.session_state.active_model]
+    acc  = int(m.get("accuracy",  0) * 100)
+    f1   = int(m.get("f1",        0) * 100)
+    pre  = int(m.get("precision", 0) * 100)
+    rec  = int(m.get("recall",    0) * 100)
+    _md(
+        f'<div style="background:#161614;border:.5px solid #2a2a26;border-top:none;'
+        f'border-radius:0 0 6px 6px;padding:6px 14px;display:flex;align-items:center;'
+        f'gap:20px;margin-bottom:4px">'
+        f'<span style="font-size:11px;color:#EF9F27">{info["tagline"]}</span>'
+        f'<span style="font-size:11px;color:#5a5a54">acc <b style="color:#d4d3cc">{acc}%</b></span>'
+        f'<span style="font-size:11px;color:#5a5a54">f1 <b style="color:#d4d3cc">{f1}%</b></span>'
+        f'<span style="font-size:11px;color:#5a5a54">precision <b style="color:#d4d3cc">{pre}%</b></span>'
+        f'<span style="font-size:11px;color:#5a5a54">recall <b style="color:#1D9E75">{rec}%</b></span>'
+        f'</div>'
+    )
 
 # ── Confidence arc gauge ──────────────────────────────────────────────────────
 def _arc_gauge(spam_prob: float, is_spam: bool):
@@ -400,19 +433,31 @@ def _stats_tab():
     prec_vals = [round(metrics.get(m,{}).get("precision",0)*100, 1) for m in model_ids]
     rec_vals  = [round(metrics.get(m,{}).get("recall",0)*100, 1)    for m in model_ids]
 
-    st.markdown("""
+    # Chart — must use components.html() so the <script> actually executes.
+    # st.markdown() sandboxes HTML and never runs JavaScript.
+    chart_html = f"""<!DOCTYPE html>
+<html>
+<head>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
-""", unsafe_allow_html=True)
-
-    chart_html = f"""
-<div style="position:relative;width:100%;height:280px;background:#161614;border:.5px solid #2a2a26;border-radius:6px;padding:14px;box-sizing:border-box">
-<canvas id="mchart" role="img" aria-label="Model comparison bar chart showing accuracy, F1, precision, recall for 4 models">Model comparison data.</canvas>
+<style>
+  body{{margin:0;padding:0;background:#161614;font-family:'SF Mono','Fira Code',monospace}}
+  canvas{{display:block}}
+  .legend{{display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;font-size:11px;color:#6b6a64;padding:0 4px}}
+  .dot{{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle}}
+</style>
+</head>
+<body>
+<div style="background:#161614;border:.5px solid #2a2a26;border-radius:6px;padding:16px;box-sizing:border-box">
+  <canvas id="mchart" height="220"></canvas>
+  <div class="legend">
+    <span><span class="dot" style="background:#EF9F27"></span>Accuracy</span>
+    <span><span class="dot" style="background:#C84A1A"></span>F1 spam</span>
+    <span><span class="dot" style="background:#378ADD"></span>Precision</span>
+    <span><span class="dot" style="background:#1D9E75"></span>Recall</span>
+  </div>
 </div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script>
-(function(){{
-const ctx = document.getElementById('mchart');
-new Chart(ctx, {{
+new Chart(document.getElementById('mchart'), {{
   type: 'bar',
   data: {{
     labels: {model_names},
@@ -420,28 +465,28 @@ new Chart(ctx, {{
       {{label:'Accuracy', data:{acc_vals}, backgroundColor:'#EF9F27', borderRadius:3}},
       {{label:'F1 Spam',  data:{f1_vals},  backgroundColor:'#C84A1A', borderRadius:3}},
       {{label:'Precision',data:{prec_vals},backgroundColor:'#378ADD', borderRadius:3}},
-      {{label:'Recall',   data:{rec_vals}, backgroundColor:'#1D9E75', borderRadius:3}},
+      {{label:'Recall',   data:{rec_vals}, backgroundColor:'#1D9E75', borderRadius:3}}
     ]
   }},
   options: {{
-    responsive:true, maintainAspectRatio:false,
-    plugins:{{legend:{{display:false}}, tooltip:{{callbacks:{{label:c=>c.dataset.label+': '+c.raw+'%'}}}}}},
-    scales:{{
-      x:{{ticks:{{color:'#6b6a64',font:{{size:11}}}}, grid:{{color:'#2a2a26'}}}},
-      y:{{min:60,max:100,ticks:{{color:'#6b6a64',font:{{size:11}},callback:v=>v+'%'}},grid:{{color:'#2a2a26'}}}}
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {{
+      legend: {{display: false}},
+      tooltip: {{callbacks: {{label: c => c.dataset.label + ': ' + c.raw + '%'}}}}
+    }},
+    scales: {{
+      x: {{ticks:{{color:'#6b6a64',font:{{size:11}}}}, grid:{{color:'#2a2a26'}}}},
+      y: {{min:60,max:100,
+           ticks:{{color:'#6b6a64',font:{{size:11}},callback:v=>v+'%'}},
+           grid:{{color:'#2a2a26'}}}}
     }}
   }}
 }});
-}})();
 </script>
-<div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;font-size:11px;color:#6b6a64">
-  <span><span style="display:inline-block;width:10px;height:10px;background:#EF9F27;border-radius:2px;margin-right:4px"></span>Accuracy</span>
-  <span><span style="display:inline-block;width:10px;height:10px;background:#C84A1A;border-radius:2px;margin-right:4px"></span>F1 spam</span>
-  <span><span style="display:inline-block;width:10px;height:10px;background:#378ADD;border-radius:2px;margin-right:4px"></span>Precision</span>
-  <span><span style="display:inline-block;width:10px;height:10px;background:#1D9E75;border-radius:2px;margin-right:4px"></span>Recall</span>
-</div>
-"""
-    st.markdown(chart_html, unsafe_allow_html=True)
+</body>
+</html>"""
+    components.html(chart_html, height=310)
 
     st.markdown("<div style='margin-top:20px'>", unsafe_allow_html=True)
     _md(_sec("per-model details"))
