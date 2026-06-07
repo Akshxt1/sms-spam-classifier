@@ -67,11 +67,14 @@ def _try_load(path):
         return None
 
 
-def predict_sms(message: str, model_id: str = "ensemble") -> dict:
+def predict_sms(message: str, model_id: str = "ensemble",
+                threshold_override: float = None) -> dict:
     entry     = _load(model_id)
     shared    = _cache["_shared"]
     model     = entry["model"]
-    threshold = entry["meta"]["threshold"]
+    # Use override if provided, otherwise use the trained threshold
+    threshold = threshold_override if threshold_override is not None \
+                else entry["meta"]["threshold"]
 
     cleaned   = clean_text(message)
     vec_tfidf = shared["vectorizer"].transform([cleaned])
@@ -94,8 +97,8 @@ def predict_sms(message: str, model_id: str = "ensemble") -> dict:
     }
 
 
-def predict_all(message: str) -> dict:
-    return {mid: predict_sms(message, mid) for mid in MODEL_INFO}
+def predict_all(message: str, threshold_override: float = None) -> dict:
+    return {mid: predict_sms(message, mid, threshold_override) for mid in MODEL_INFO}
 
 
 def get_all_metrics() -> dict:

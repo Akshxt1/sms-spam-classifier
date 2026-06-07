@@ -42,22 +42,14 @@ textarea:focus{border-color:#EF9F27!important;box-shadow:none!important}
 .stDownloadButton button{color:#1D9E75!important;border-color:#1D9E75!important}
 footer,#MainMenu,[data-testid="stDecoration"]{display:none!important}
 [data-testid="stHeader"]{background:transparent!important}
-/* ── Model selector radio → compact pills ── */
-div[data-testid="stRadio"]>div>label{display:none!important}
-div[data-testid="stRadio"] div[role="radiogroup"]{
-  background:#161614;border:.5px solid #2a2a26;border-radius:6px 6px 0 0;
-  padding:8px 10px!important;gap:6px!important;flex-wrap:nowrap!important}
-div[data-testid="stRadio"] div[role="radiogroup"] label{
-  background:#1c1c1a!important;border:.5px solid #2e2e2a!important;
-  border-radius:20px!important;padding:5px 16px!important;
-  cursor:pointer!important;min-height:unset!important;margin:0!important}
-div[data-testid="stRadio"] div[role="radiogroup"] label:hover{border-color:#6b6a64!important}
-div[data-testid="stRadio"] div[role="radiogroup"] label:has(input:checked){
-  background:#1c1200!important;border-color:#EF9F27!important}
-div[data-testid="stRadio"] div[role="radiogroup"] p{
-  font-size:12px!important;color:#5a5a54!important;
-  margin:0!important;white-space:nowrap!important;line-height:1.4!important}
-div[data-testid="stRadio"] div[role="radiogroup"] label:has(input:checked) p{color:#EF9F27!important}
+/* Suppress material-icon text fallback shown in sidebar header */
+[data-testid="stSidebarCollapsedControl"] span,
+button[data-testid="collapsedControl"] span{font-size:0!important}
+/* Slider */
+[data-testid="stSlider"] [data-testid="stWidgetLabel"] p{
+  font-size:11px!important;color:#5a5a54!important;letter-spacing:.06em!important;text-transform:uppercase!important}
+[data-testid="stSlider"] div[data-baseweb="slider"] div[role="slider"]{
+  background:#EF9F27!important;border-color:#EF9F27!important}
 </style>""", unsafe_allow_html=True)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -76,7 +68,7 @@ def _sec(t):
 def _init():
     for k, v in [("history", []), ("message_buffer", ""),
                  ("last_result", None), ("active_model", "ensemble"),
-                 ("compare_results", None)]:
+                 ("compare_results", None), ("threshold_mult", 1.15)]:
         if k not in st.session_state:
             st.session_state[k] = v
 
@@ -120,52 +112,69 @@ def _sidebar():
             f'<p style="font-size:11px;color:#5a5a54;margin:2px 0 0">'
             f'{MODEL_INFO[st.session_state.active_model]["tagline"]}</p></div>')
 
-# ── Model selector pills ──────────────────────────────────────────────────────
+        # ── Sensitivity slider ────────────────────────────────────────────────
+        st.markdown("<div style='margin-top:18px'>", unsafe_allow_html=True)
+        _md(_sec("spam sensitivity"))
+        _md('<p style="font-size:11px;color:#5a5a54;margin:0 0 6px;line-height:1.5">'
+            'Lower = catches more spam (more false positives).<br>'
+            'Raise if ham messages are being flagged.</p>')
+        mult = st.slider(
+            "sensitivity", min_value=0.6, max_value=1.6,
+            value=st.session_state.threshold_mult,
+            step=0.05, label_visibility="collapsed",
+            key="thresh_slider"
+        )
+        if mult != st.session_state.threshold_mult:
+            st.session_state.threshold_mult  = mult
+            st.session_state.last_result     = None
+            st.session_state.compare_results = None
+        labels_ = {0.6:"Max recall", 1.0:"Balanced", 1.6:"Max precision"}
+        nearest = min(labels_, key=lambda x: abs(x - mult))
+        _md(f'<p style="font-size:10px;color:#5a5a54;text-align:center;margin:2px 0 0">'
+            f'{"⚡ " if mult < 0.9 else ("✓ " if mult <= 1.1 else "🎯 ")}'
+            f'{labels_[nearest]} ({mult:.2f}×)</p>')
+        st.markdown("</div>", unsafe_allow_html=True)
+
+# ── Model selector ────────────────────────────────────────────────────────────
 def _model_selector():
     metrics   = get_all_metrics()
     model_ids = list(MODEL_INFO.keys())
+    cols      = st.columns(4, gap="small")
 
-    # Horizontal radio styled as pills via CSS above
-    labels = {
-        "ensemble":     "Ensemble ★",
-        "linear_svc":   "Linear SVC",
-        "logistic_reg": "Logistic Reg.",
-        "naive_bayes":  "Naive Bayes",
-    }
-    current_idx = model_ids.index(st.session_state.active_model)
-    choice = st.radio(
-        "model",
-        options=model_ids,
-        format_func=lambda x: labels[x],
-        index=current_idx,
-        horizontal=True,
-        label_visibility="collapsed",
-        key="model_radio",
-    )
-    if choice != st.session_state.active_model:
-        st.session_state.active_model    = choice
-        st.session_state.last_result     = None
-        st.session_state.compare_results = None
-        st.rerun()
+    for i, mid in enumerate(model_ids):
+        info   = MODEL_INFO[mid]
+        m      = metrics.get(mid, {})
+        acc    = int(m.get("accuracy", 0) * 100)
+        rec    = int(m.get("recall",   0) * 100)
+        active = st.session_state.active_model == mid
+        badge  = "★ " if mid == "ensemble" else ""
 
-    # Compact metrics strip directly below the pill bar
-    m    = metrics.get(st.session_state.active_model, {})
-    info = MODEL_INFO[st.session_state.active_model]
-    acc  = int(m.get("accuracy",  0) * 100)
-    f1   = int(m.get("f1",        0) * 100)
-    pre  = int(m.get("precision", 0) * 100)
-    rec  = int(m.get("recall",    0) * 100)
-    _md(
-        f'<div style="background:#161614;border:.5px solid #2a2a26;border-top:none;'
-        f'border-radius:0 0 6px 6px;padding:6px 14px;display:flex;align-items:center;'
-        f'gap:20px;margin-bottom:4px">'
-        f'<span style="font-size:11px;color:#EF9F27">{info["tagline"]}</span>'
-        f'<span style="font-size:11px;color:#5a5a54">acc <b style="color:#d4d3cc">{acc}%</b></span>'
-        f'<span style="font-size:11px;color:#5a5a54">f1 <b style="color:#d4d3cc">{f1}%</b></span>'
-        f'<span style="font-size:11px;color:#5a5a54">precision <b style="color:#d4d3cc">{pre}%</b></span>'
-        f'<span style="font-size:11px;color:#5a5a54">recall <b style="color:#1D9E75">{rec}%</b></span>'
-        f'</div>'
-    )
+        bdr = "#EF9F27" if active else "#2e2e2a"
+        bg  = "#1c1200" if active else "#161614"
+        tc  = "#EF9F27" if active else "#9b9a94"
+        rc  = "#1D9E75" if active else "#4a4a44"
+
+        with cols[i]:
+            # Info card
+            _md(f'<div style="background:{bg};border:.5px solid {bdr};'
+                f'border-radius:6px 6px 0 0;padding:9px 12px;text-align:center">'
+                f'<p style="font-size:12px;font-weight:{"600" if active else "400"};'
+                f'color:{tc};margin:0 0 3px;white-space:nowrap">{badge}{info["label"]}</p>'
+                f'<p style="font-size:10px;color:#5a5a54;margin:0">'
+                f'acc {acc}% · rec <span style="color:{rc}">{rec}%</span></p>'
+                f'</div>')
+
+            if active:
+                # "Selected" footer — no button needed
+                _md(f'<div style="background:{bg};border:.5px solid {bdr};border-top:none;'
+                    f'border-radius:0 0 6px 6px;padding:4px 0;text-align:center">'
+                    f'<p style="font-size:10px;color:#EF9F27;margin:0">✓ selected</p></div>')
+            else:
+                if st.button("select", key=f"sel_{mid}", use_container_width=True):
+                    st.session_state.active_model    = mid
+                    st.session_state.last_result     = None
+                    st.session_state.compare_results = None
+                    st.rerun()
 
 # ── Confidence arc gauge ──────────────────────────────────────────────────────
 def _arc_gauge(spam_prob: float, is_spam: bool):
@@ -343,7 +352,10 @@ def _analyse_tab():
         if classify_btn and message.strip():
             if not (models_loaded := _check_models()): return
             with st.spinner(""):
-                result = predict_sms(message, st.session_state.active_model)
+                # Apply sensitivity multiplier to the trained threshold
+                base_t = get_all_metrics().get(st.session_state.active_model, {}).get("threshold", 0.45)
+                t_override = min(max(base_t * st.session_state.threshold_mult, 0.1), 0.95)
+                result = predict_sms(message, st.session_state.active_model, t_override)
                 result["message"] = message
                 st.session_state.history.append(result)
                 st.session_state.last_result     = result
@@ -352,9 +364,15 @@ def _analyse_tab():
         if compare_btn and message.strip():
             if not (models_loaded := _check_models()): return
             with st.spinner("Running all 4 models…"):
-                all_r = predict_all(message)
-                for mid, r in all_r.items(): r["message"] = message
-                best  = max(all_r.values(), key=lambda r: r["spam_prob"])
+                all_metrics = get_all_metrics()
+                all_r = {}
+                for mid in MODEL_INFO:
+                    base_t = all_metrics.get(mid, {}).get("threshold", 0.45)
+                    t_override = min(max(base_t * st.session_state.threshold_mult, 0.1), 0.95)
+                    r = predict_sms(message, mid, t_override)
+                    r["message"] = message
+                    all_r[mid] = r
+                best = max(all_r.values(), key=lambda r: r["spam_prob"])
                 best["message"] = message
                 st.session_state.history.append(best)
                 st.session_state.compare_results = all_r
@@ -433,22 +451,26 @@ def _stats_tab():
     prec_vals = [round(metrics.get(m,{}).get("precision",0)*100, 1) for m in model_ids]
     rec_vals  = [round(metrics.get(m,{}).get("recall",0)*100, 1)    for m in model_ids]
 
-    # Chart — must use components.html() so the <script> actually executes.
-    # st.markdown() sandboxes HTML and never runs JavaScript.
+    # Chart — components.html() so <script> actually executes
     chart_html = f"""<!DOCTYPE html>
 <html>
 <head>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <style>
-  body{{margin:0;padding:0;background:#161614;font-family:'SF Mono','Fira Code',monospace}}
-  canvas{{display:block}}
-  .legend{{display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;font-size:11px;color:#6b6a64;padding:0 4px}}
-  .dot{{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle}}
+  *{{box-sizing:border-box;margin:0;padding:0}}
+  body{{background:#161614;font-family:'SF Mono','Fira Code',monospace}}
+  .wrap{{background:#161614;border:.5px solid #2a2a26;border-radius:6px;
+         padding:16px;height:300px;display:flex;flex-direction:column}}
+  .chart-area{{flex:1;position:relative;min-height:0}}
+  .legend{{display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;
+           font-size:11px;color:#6b6a64;flex-shrink:0}}
+  .dot{{display:inline-block;width:10px;height:10px;border-radius:2px;
+        margin-right:4px;vertical-align:middle}}
 </style>
 </head>
 <body>
-<div style="background:#161614;border:.5px solid #2a2a26;border-radius:6px;padding:16px;box-sizing:border-box">
-  <canvas id="mchart" height="220"></canvas>
+<div class="wrap">
+  <div class="chart-area"><canvas id="c"></canvas></div>
   <div class="legend">
     <span><span class="dot" style="background:#EF9F27"></span>Accuracy</span>
     <span><span class="dot" style="background:#C84A1A"></span>F1 spam</span>
@@ -457,36 +479,37 @@ def _stats_tab():
   </div>
 </div>
 <script>
-new Chart(document.getElementById('mchart'), {{
-  type: 'bar',
-  data: {{
-    labels: {model_names},
-    datasets: [
-      {{label:'Accuracy', data:{acc_vals}, backgroundColor:'#EF9F27', borderRadius:3}},
-      {{label:'F1 Spam',  data:{f1_vals},  backgroundColor:'#C84A1A', borderRadius:3}},
-      {{label:'Precision',data:{prec_vals},backgroundColor:'#378ADD', borderRadius:3}},
-      {{label:'Recall',   data:{rec_vals}, backgroundColor:'#1D9E75', borderRadius:3}}
+new Chart(document.getElementById('c'), {{
+  type:'bar',
+  data:{{
+    labels:{model_names},
+    datasets:[
+      {{label:'Accuracy', data:{acc_vals}, backgroundColor:'#EF9F27',borderRadius:3}},
+      {{label:'F1 Spam',  data:{f1_vals},  backgroundColor:'#C84A1A',borderRadius:3}},
+      {{label:'Precision',data:{prec_vals},backgroundColor:'#378ADD',borderRadius:3}},
+      {{label:'Recall',   data:{rec_vals}, backgroundColor:'#1D9E75',borderRadius:3}}
     ]
   }},
-  options: {{
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {{
-      legend: {{display: false}},
-      tooltip: {{callbacks: {{label: c => c.dataset.label + ': ' + c.raw + '%'}}}}
+  options:{{
+    responsive:true, maintainAspectRatio:false,
+    plugins:{{
+      legend:{{display:false}},
+      tooltip:{{callbacks:{{label:c=>c.dataset.label+': '+c.raw+'%'}}}}
     }},
-    scales: {{
-      x: {{ticks:{{color:'#6b6a64',font:{{size:11}}}}, grid:{{color:'#2a2a26'}}}},
-      y: {{min:60,max:100,
-           ticks:{{color:'#6b6a64',font:{{size:11}},callback:v=>v+'%'}},
-           grid:{{color:'#2a2a26'}}}}
+    scales:{{
+      x:{{ticks:{{color:'#6b6a64',font:{{size:11}}}},grid:{{color:'#2a2a26'}}}},
+      y:{{
+        min:0, max:100,
+        ticks:{{color:'#6b6a64',font:{{size:11}},stepSize:20,callback:v=>v+'%'}},
+        grid:{{color:'#2a2a26'}}
+      }}
     }}
   }}
 }});
 </script>
 </body>
 </html>"""
-    components.html(chart_html, height=310)
+    components.html(chart_html, height=330)
 
     st.markdown("<div style='margin-top:20px'>", unsafe_allow_html=True)
     _md(_sec("per-model details"))
