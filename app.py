@@ -42,9 +42,10 @@ textarea:focus{border-color:#EF9F27!important;box-shadow:none!important}
 .stDownloadButton button{color:#1D9E75!important;border-color:#1D9E75!important}
 footer,#MainMenu,[data-testid="stDecoration"]{display:none!important}
 [data-testid="stHeader"]{background:transparent!important}
-/* Suppress material-icon text fallback shown in sidebar header */
-[data-testid="stSidebarCollapsedControl"] span,
-button[data-testid="collapsedControl"] span{font-size:0!important}
+/* Hide sidebar header — Material Icons font fails on Streamlit Cloud,
+   showing raw text like "keyboard_double_arrow_right" instead of the icon */
+[data-testid="stSidebarHeader"]{display:none!important}
+[data-testid="stSidebarCollapseButton"]{display:none!important}
 /* Slider */
 [data-testid="stSlider"] [data-testid="stWidgetLabel"] p{
   font-size:11px!important;color:#5a5a54!important;letter-spacing:.06em!important;text-transform:uppercase!important}
