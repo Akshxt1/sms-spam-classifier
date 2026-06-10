@@ -42,10 +42,36 @@ textarea:focus{border-color:#EF9F27!important;box-shadow:none!important}
 .stDownloadButton button{color:#1D9E75!important;border-color:#1D9E75!important}
 footer,#MainMenu,[data-testid="stDecoration"]{display:none!important}
 [data-testid="stHeader"]{background:transparent!important}
-/* Hide sidebar header — Material Icons font fails on Streamlit Cloud,
-   showing raw text like "keyboard_double_arrow_right" instead of the icon */
-[data-testid="stSidebarHeader"]{display:none!important}
-[data-testid="stSidebarCollapseButton"]{display:none!important}
+/* ── Sidebar collapse toggle button ── */
+/* Load Material Symbols so the icon renders correctly */
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20,300,0,0');
+[data-testid="stSidebarHeader"]{
+  background:#0f0f0d!important;
+  border-bottom:.5px solid #2e2e2a!important;
+  padding:6px 8px!important;
+  min-height:38px!important;
+  display:flex!important;align-items:center!important}
+[data-testid="stSidebarHeader"] button,
+[data-testid="stSidebarCollapseButton"] button{
+  background:transparent!important;
+  border:.5px solid #2e2e2a!important;
+  border-radius:6px!important;
+  width:32px!important;height:28px!important;
+  min-width:unset!important;padding:0!important;
+  cursor:pointer!important;
+  display:inline-flex!important;align-items:center!important;justify-content:center!important}
+[data-testid="stSidebarHeader"] button:hover,
+[data-testid="stSidebarCollapseButton"] button:hover{
+  border-color:#EF9F27!important}
+/* Material Symbols icon inside button */
+[data-testid="stSidebarHeader"] button span,
+[data-testid="stSidebarCollapseButton"] button span{
+  font-family:'Material Symbols Rounded',sans-serif!important;
+  font-size:18px!important;color:#6b6a64!important;
+  font-variation-settings:'FILL' 0,'wght' 300,'GRAD' 0,'opsz' 20!important;
+  line-height:1!important}
+[data-testid="stSidebarHeader"] button:hover span,
+[data-testid="stSidebarCollapseButton"] button:hover span{color:#EF9F27!important}
 /* Slider */
 [data-testid="stSlider"] [data-testid="stWidgetLabel"] p{
   font-size:11px!important;color:#5a5a54!important;letter-spacing:.06em!important;text-transform:uppercase!important}
